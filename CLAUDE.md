@@ -26,7 +26,7 @@ uv build && uv publish
 
 - **Language**: Python 3.11+
 - **Package Manager**: uv (with uvx for zero-install execution)
-- **Terminal UI**: Rich library (Live display at 30fps)
+- **Terminal UI**: curses (standard library)
 - **Testing**: pytest
 - **Build**: pyproject.toml with hatchling
 

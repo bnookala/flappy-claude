@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from flappy_claude import __version__
-from flappy_claude.config import DEFAULT_CONFIG
+from flappy_claude.config import get_terminal_config
 from flappy_claude.entities import GameMode, GameState
 from flappy_claude.game import run_game_loop
 from flappy_claude.scores import load_high_score
@@ -28,7 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--signal-file",
         type=Path,
-        default=Path(DEFAULT_CONFIG.signal_file_path),
+        default=Path("/tmp/flappy-claude-signal"),
         help="Path to IPC signal file for Claude integration",
     )
 
@@ -48,8 +48,6 @@ def check_terminal() -> bool:
     Returns:
         True if terminal is suitable, False otherwise
     """
-    import sys
-
     if not sys.stdin.isatty():
         print("Error: flappy-claude requires an interactive terminal.")
         print("Please run from a terminal with keyboard input support.")
@@ -57,7 +55,7 @@ def check_terminal() -> bool:
 
     if not sys.stdout.isatty():
         print("Error: flappy-claude requires a terminal display.")
-        print("Please run from a terminal that supports Rich output.")
+        print("Please run from a terminal that supports curses.")
         return False
 
     return True
@@ -74,8 +72,8 @@ def main() -> None:
     # Determine game mode
     mode = GameMode.SINGLE_LIFE if args.single_life else GameMode.AUTO_RESTART
 
-    # Create initial game state
-    config = DEFAULT_CONFIG
+    # Create initial game state with terminal-sized config
+    config = get_terminal_config()
     high_score_path = Path(config.high_score_path).expanduser()
     high_score = load_high_score(high_score_path)
     state = GameState.new_game(config, mode=mode, high_score=high_score)

@@ -12,9 +12,7 @@ license = "MIT"
 authors = [
     { name = "Flappy Claude Contributors" }
 ]
-dependencies = [
-    "rich>=13.0.0",
-]
+dependencies = []
 
 [project.optional-dependencies]
 dev = [
