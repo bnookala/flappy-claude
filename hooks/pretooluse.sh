@@ -4,17 +4,15 @@
 # All user interaction happens in a background process.
 
 # Configuration
-DEFAULT_TOOL_THRESHOLD=5    # Initial tool calls before first prompt
-BACKOFF_MULTIPLIER=4        # Multiply threshold by this when user declines
-MAX_TOOL_THRESHOLD=100      # Maximum threshold (don't ask after this many declines)
-MIN_SECONDS=30              # OR minimum seconds since first tool call
+TURNS_BETWEEN_PROMPTS=10    # Only prompt once every N conversation turns
+MIN_TOOL_CALLS=5            # Minimum tool calls in a turn before prompting
 
 # File paths
 SIGNAL_FILE="/tmp/flappy-claude-signal"
 LOCK_DIR="/tmp/flappy-claude-lock"
-FIRST_TOOL_FILE="/tmp/flappy-claude-first-tool"
 TOOL_COUNT_FILE="/tmp/flappy-claude-tool-count"
-THRESHOLD_FILE="/tmp/flappy-claude-threshold"  # Current threshold (increases on decline)
+TURN_COUNT_FILE="/tmp/flappy-claude-turns"      # Tracks conversation turns
+LAST_PROMPT_TURN_FILE="/tmp/flappy-claude-last-prompt-turn"  # Turn when last prompted
 FLAPPY_CLAUDE_DIR="${FLAPPY_CLAUDE_DIR:-$HOME/code/flappy-claude}"
 TERM_PROG="$TERM_PROGRAM"  # Capture before backgrounding
 
@@ -26,10 +24,17 @@ if [ -d "$LOCK_DIR" ]; then
     exit 0
 fi
 
-# Track first tool call timestamp
-if [ ! -f "$FIRST_TOOL_FILE" ]; then
-    date +%s > "$FIRST_TOOL_FILE"
-fi
+# Check if terminal is in foreground (only prompt if user is actively watching)
+FRONTMOST=$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null)
+case "$FRONTMOST" in
+    ghostty|Ghostty|iTerm*|Terminal|kitty|Kitty|Alacritty|alacritty|Warp)
+        # Terminal is focused, continue
+        ;;
+    *)
+        # Terminal not focused, don't bother user
+        exit 0
+        ;;
+esac
 
 # Increment tool count (with file locking to prevent race conditions)
 (
@@ -44,15 +49,18 @@ fi
 ) 200>/tmp/flappy-claude-count.lock
 
 COUNT=$(cat "$TOOL_COUNT_FILE" 2>/dev/null || echo "0")
-FIRST_TOOL_TIME=$(cat "$FIRST_TOOL_FILE" 2>/dev/null || echo "0")
-CURRENT_TIME=$(date +%s)
-ELAPSED=$((CURRENT_TIME - FIRST_TOOL_TIME))
 
-# Get current threshold (or use default)
-CURRENT_THRESHOLD=$(cat "$THRESHOLD_FILE" 2>/dev/null || echo "$DEFAULT_TOOL_THRESHOLD")
+# Check if we have enough tool calls this turn
+if [ "$COUNT" -lt "$MIN_TOOL_CALLS" ]; then
+    exit 0
+fi
 
-# Only proceed if threshold met
-if [ "$COUNT" -lt "$CURRENT_THRESHOLD" ] && [ "$ELAPSED" -lt "$MIN_SECONDS" ]; then
+# Check turn-based limiting
+CURRENT_TURN=$(cat "$TURN_COUNT_FILE" 2>/dev/null || echo "0")
+LAST_PROMPT_TURN=$(cat "$LAST_PROMPT_TURN_FILE" 2>/dev/null || echo "-999")
+TURNS_SINCE_PROMPT=$((CURRENT_TURN - LAST_PROMPT_TURN))
+
+if [ "$TURNS_SINCE_PROMPT" -lt "$TURNS_BETWEEN_PROMPTS" ]; then
     exit 0
 fi
 
@@ -61,19 +69,18 @@ if ! mkdir "$LOCK_DIR" 2>/dev/null; then
     exit 0
 fi
 
+# Record that we're prompting on this turn
+echo "$CURRENT_TURN" > "$LAST_PROMPT_TURN_FILE"
+
 # Create a detached launcher script and run it completely independently
 LAUNCHER="/tmp/flappy-claude-launcher-$$.sh"
 cat > "$LAUNCHER" << 'LAUNCHER_EOF'
 #!/bin/bash
 SIGNAL_FILE="$1"
 LOCK_DIR="$2"
-FIRST_TOOL_FILE="$3"
-TOOL_COUNT_FILE="$4"
-FLAPPY_CLAUDE_DIR="$5"
-TERM_PROG="$6"
-THRESHOLD_FILE="$7"
-BACKOFF_MULTIPLIER="$8"
-MAX_TOOL_THRESHOLD="$9"
+TOOL_COUNT_FILE="$3"
+FLAPPY_CLAUDE_DIR="$4"
+TERM_PROG="$5"
 LOG="/tmp/flappy-claude-hook.log"
 
 echo "$(date): Showing dialog (detached)" >> "$LOG"
@@ -82,19 +89,8 @@ echo "$(date): Showing dialog (detached)" >> "$LOG"
 RESPONSE=$(osascript -e 'display dialog "Play Flappy Claude while Claude works?" buttons {"No", "Yes"} default button "Yes" giving up after 15' 2>/dev/null)
 
 if [[ "$RESPONSE" != *"Yes"* ]]; then
-    # User declined - increase threshold for next time (backoff)
-    CURRENT=$(cat "$THRESHOLD_FILE" 2>/dev/null || echo "5")
-    NEW_THRESHOLD=$((CURRENT * BACKOFF_MULTIPLIER))
-    if [ "$NEW_THRESHOLD" -gt "$MAX_TOOL_THRESHOLD" ]; then
-        NEW_THRESHOLD="$MAX_TOOL_THRESHOLD"
-    fi
-    echo "$NEW_THRESHOLD" > "$THRESHOLD_FILE"
-    # Reset tool count so we count from here
-    echo "0" > "$TOOL_COUNT_FILE"
-    date +%s > "$FIRST_TOOL_FILE"
-
     rmdir "$LOCK_DIR" 2>/dev/null
-    echo "$(date): User declined - backoff threshold now $NEW_THRESHOLD" >> "$LOG"
+    echo "$(date): User declined or timeout" >> "$LOG"
     rm -f "$0"  # Clean up launcher script
     exit 0
 fi
@@ -103,7 +99,7 @@ fi
 touch "$SIGNAL_FILE"
 
 # Game command
-GAME_CMD="cd '$FLAPPY_CLAUDE_DIR' && uv run python -m flappy_claude; rm -f '$SIGNAL_FILE' '$FIRST_TOOL_FILE' '$TOOL_COUNT_FILE'; rmdir '$LOCK_DIR' 2>/dev/null"
+GAME_CMD="cd '$FLAPPY_CLAUDE_DIR' && uv run python -m flappy_claude; rm -f '$SIGNAL_FILE'; rmdir '$LOCK_DIR' 2>/dev/null"
 
 # Launch in detected terminal
 case "$TERM_PROG" in
@@ -134,7 +130,7 @@ LAUNCHER_EOF
 chmod +x "$LAUNCHER"
 
 # Run launcher completely detached using nohup + disown
-nohup "$LAUNCHER" "$SIGNAL_FILE" "$LOCK_DIR" "$FIRST_TOOL_FILE" "$TOOL_COUNT_FILE" "$FLAPPY_CLAUDE_DIR" "$TERM_PROG" "$THRESHOLD_FILE" "$BACKOFF_MULTIPLIER" "$MAX_TOOL_THRESHOLD" > /dev/null 2>&1 &
+nohup "$LAUNCHER" "$SIGNAL_FILE" "$LOCK_DIR" "$TOOL_COUNT_FILE" "$FLAPPY_CLAUDE_DIR" "$TERM_PROG" > /dev/null 2>&1 &
 disown
 
 # Exit immediately - don't block Claude!
