@@ -9,6 +9,7 @@ from flappy_claude.config import Config
 class GameStatus(Enum):
     """Current game phase."""
 
+    WAITING = auto()
     PLAYING = auto()
     DEAD = auto()
     PROMPTED = auto()
@@ -67,9 +68,11 @@ class GameState:
     pipes: list[Pipe] = field(default_factory=list)
     score: int = 0
     high_score: int = 0
-    status: GameStatus = GameStatus.PLAYING
+    status: GameStatus = GameStatus.WAITING
     mode: GameMode = GameMode.AUTO_RESTART
     claude_ready: bool = False
+    was_playing: bool = False  # Track if user was actively playing when Claude finished
+    prompted_at: float = 0.0  # Timestamp when Claude Ready prompt appeared
 
     @classmethod
     def new_game(

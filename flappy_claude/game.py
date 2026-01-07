@@ -32,9 +32,15 @@ def render_game(stdscr, state: GameState, config: Config) -> None:
         pass
 
     # Draw header
-    header = f" Score: {state.score}  |  High: {state.high_score}  |  Flappy Claude "
+    if state.claude_ready and state.status == GameStatus.PLAYING:
+        # Claude finished but user chose to keep playing - show blinking indicator
+        header = f" Score: {state.score}  |  High: {state.high_score}  |  CLAUDE WAITING "
+        header_color = curses.color_pair(3) | curses.A_BOLD | curses.A_BLINK
+    else:
+        header = f" Score: {state.score}  |  High: {state.high_score}  |  Flappy Claude "
+        header_color = curses.color_pair(2) | curses.A_BOLD
     try:
-        stdscr.addstr(0, max(0, (max_x - len(header)) // 2), header, curses.color_pair(2) | curses.A_BOLD)
+        stdscr.addstr(0, max(0, (max_x - len(header)) // 2), header, header_color)
     except curses.error:
         pass
 
@@ -56,7 +62,7 @@ def render_game(stdscr, state: GameState, config: Config) -> None:
             try:
                 if char == "🦀":  # Crab
                     stdscr.addstr(screen_row, screen_col, char, curses.color_pair(3) | curses.A_BOLD)
-                elif char == "#":  # Pipe
+                elif char == "█":  # Pipe
                     stdscr.addstr(screen_row, screen_col, char, curses.color_pair(4))
                 else:
                     stdscr.addstr(screen_row, screen_col, char)
@@ -64,7 +70,10 @@ def render_game(stdscr, state: GameState, config: Config) -> None:
                 pass
 
     # Draw footer
-    footer = " SPACE=flap  Q=quit "
+    if state.claude_ready and state.status == GameStatus.PLAYING:
+        footer = " SPACE=flap  Y=return to Claude  Q=quit "
+    else:
+        footer = " SPACE=flap  Q=quit "
     try:
         stdscr.addstr(max_y - 1, max(0, (max_x - len(footer)) // 2), footer, curses.color_pair(5))
     except curses.error:
@@ -123,21 +132,34 @@ def render_overlay(stdscr, title: str, lines: list[str], config: Config) -> None
     stdscr.refresh()
 
 
-def render_claude_ready_prompt(stdscr, state: GameState, config: Config) -> None:
-    """Render the Claude ready prompt overlay."""
+def render_claude_ready_prompt(stdscr, state: GameState, config: Config, countdown: int) -> None:
+    """Render the Claude ready prompt overlay with countdown."""
     render_game(stdscr, state, config)
-    render_overlay(
-        stdscr,
-        " Claude Ready! ",
-        [
-            "✨ Claude has finished! ✨",
+
+    if state.was_playing:
+        # User was actively playing
+        lines = [
+            "Claude has finished!",
             "",
-            f"Current Score: {state.score}",
+            f"Your Score: {state.score}",
             "",
-            "Return to session? (y/n)",
-        ],
-        config,
-    )
+            "[Y] Return to Claude",
+            "[N] Keep playing",
+            "",
+            f"Auto-closing in {countdown}s...",
+        ]
+    else:
+        # User was on waiting screen
+        lines = [
+            "Claude has finished!",
+            "",
+            "[Y] Return to Claude",
+            "[N] Start playing anyway",
+            "",
+            f"Auto-closing in {countdown}s...",
+        ]
+
+    render_overlay(stdscr, " Claude Ready! ", lines, config)
 
 
 def render_death_screen(stdscr, state: GameState, config: Config) -> None:
@@ -172,6 +194,23 @@ def render_game_over_screen(stdscr, state: GameState, config: Config) -> None:
     )
 
 
+def render_waiting_screen(stdscr, state: GameState, config: Config) -> None:
+    """Render the waiting screen before game starts."""
+    render_game(stdscr, state, config)
+    render_overlay(
+        stdscr,
+        " Flappy Claude ",
+        [
+            "Play while Claude works!",
+            "",
+            f"High Score: {state.high_score}",
+            "",
+            "Press SPACE to start",
+        ],
+        config,
+    )
+
+
 def _get_char_at(state: GameState, config: Config, col: int, row: int) -> str:
     """Get the character to display at a specific position."""
     # Check if bird is at this position
@@ -182,7 +221,7 @@ def _get_char_at(state: GameState, config: Config, col: int, row: int) -> str:
     # Check if any pipe is at this position
     for pipe in state.pipes:
         if _is_pipe_at(pipe, config, col, row):
-            return "#"
+            return "█"
 
     return " "
 
@@ -203,10 +242,34 @@ def _is_pipe_at(pipe: Pipe, config: Config, col: int, row: int) -> bool:
     return True
 
 
+def get_difficulty_params(score: int, config: Config) -> tuple[int, int]:
+    """Calculate difficulty parameters based on score.
+
+    Returns:
+        tuple of (gap_size, pipe_spacing)
+    """
+    # Gap shrinks from base gap to minimum of 6, decreasing every 5 points
+    base_gap = config.pipe_gap
+    min_gap = 6
+    gap_reduction = min(score // 5, (base_gap - min_gap))
+    current_gap = base_gap - gap_reduction
+
+    # Spacing shrinks from 35 to minimum of 20, decreasing every 3 points
+    base_spacing = config.pipe_spacing
+    min_spacing = 20
+    spacing_reduction = min(score // 3, (base_spacing - min_spacing))
+    current_spacing = base_spacing - spacing_reduction
+
+    return current_gap, current_spacing
+
+
 def spawn_pipe(state: GameState, config: Config) -> None:
     """Spawn a new pipe at the right edge of the screen."""
+    # Get difficulty-adjusted gap size
+    current_gap, _ = get_difficulty_params(state.score, config)
+
     # Ensure gap is fully visible with padding from edges
-    half_gap = config.pipe_gap // 2
+    half_gap = current_gap // 2
     min_gap_y = half_gap + 2
     max_gap_y = config.screen_height - half_gap - 2
 
@@ -219,7 +282,7 @@ def spawn_pipe(state: GameState, config: Config) -> None:
     pipe = Pipe(
         x=config.screen_width,
         gap_y=gap_y,
-        gap_size=config.pipe_gap,
+        gap_size=current_gap,
     )
     state.pipes.append(pipe)
 
@@ -241,8 +304,9 @@ def update_game(state: GameState, config: Config) -> None:
     # Remove off-screen pipes
     state.pipes = [p for p in state.pipes if p.x > -config.pipe_width]
 
-    # Spawn new pipes
-    if not state.pipes or state.pipes[-1].x < config.screen_width - config.pipe_spacing:
+    # Spawn new pipes (spacing decreases with difficulty)
+    _, current_spacing = get_difficulty_params(state.score, config)
+    if not state.pipes or state.pipes[-1].x < config.screen_width - current_spacing:
         spawn_pipe(state, config)
 
     # Check scoring
@@ -274,13 +338,18 @@ def handle_input(state: GameState, config: Config, key: int) -> None:
 
     if key in (ord('q'), ord('Q'), 27):  # q, Q, or ESC
         state.status = GameStatus.EXITING
+    elif key == ord(' ') and state.status == GameStatus.WAITING:
+        state.status = GameStatus.PLAYING
     elif key == ord(' ') and state.status == GameStatus.PLAYING:
         state.bird.flap(config)
     elif key in (ord('y'), ord('Y')) and state.status == GameStatus.PROMPTED:
         state.status = GameStatus.EXITING
     elif key in (ord('n'), ord('N')) and state.status == GameStatus.PROMPTED:
-        state.claude_ready = False
+        # Keep claude_ready=True so we show "CLAUDE WAITING" header
         state.status = GameStatus.PLAYING
+    elif key in (ord('y'), ord('Y')) and state.status == GameStatus.PLAYING and state.claude_ready:
+        # Allow returning to Claude while playing if Claude is waiting
+        state.status = GameStatus.EXITING
 
 
 def init_colors() -> None:
@@ -322,18 +391,28 @@ def game_main(stdscr, state: GameState, config: Config, signal_file: Path | None
             key = stdscr.getch()
             handle_input(state, config, key)
 
-            # Check signal file for Claude ready (only when playing)
-            if signal_file and state.status == GameStatus.PLAYING:
+            # Check signal file for Claude ready (when waiting or playing)
+            if signal_file and state.status in (GameStatus.WAITING, GameStatus.PLAYING):
                 if not state.claude_ready and check_signal_file(signal_file):
                     state.claude_ready = True
+                    state.was_playing = (state.status == GameStatus.PLAYING)
+                    state.prompted_at = time.time()
                     state.status = GameStatus.PROMPTED
 
             # Update game
             update_game(state, config)
 
             # Render based on state
-            if state.status == GameStatus.PROMPTED:
-                render_claude_ready_prompt(stdscr, state, config)
+            if state.status == GameStatus.WAITING:
+                render_waiting_screen(stdscr, state, config)
+            elif state.status == GameStatus.PROMPTED:
+                # Calculate countdown (10 seconds)
+                elapsed = time.time() - state.prompted_at
+                countdown = max(0, 10 - int(elapsed))
+                if countdown <= 0:
+                    state.status = GameStatus.EXITING
+                else:
+                    render_claude_ready_prompt(stdscr, state, config, countdown)
             elif state.status == GameStatus.DEAD:
                 if state.mode == GameMode.SINGLE_LIFE:
                     render_game_over_screen(stdscr, state, config)
