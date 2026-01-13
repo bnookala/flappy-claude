@@ -13,6 +13,7 @@ LOCK_DIR="/tmp/flappy-claude-lock"
 TOOL_COUNT_FILE="/tmp/flappy-claude-tool-count"
 TURN_COUNT_FILE="/tmp/flappy-claude-turns"      # Tracks conversation turns
 LAST_PROMPT_TURN_FILE="/tmp/flappy-claude-last-prompt-turn"  # Turn when last prompted
+FLAPPY_CLAUDE_DIR="${FLAPPY_CLAUDE_DIR:-$HOME/code/flappy-claude}"
 TERM_PROG="$TERM_PROGRAM"  # Capture before backgrounding
 
 # Read stdin to check tool name
@@ -87,7 +88,9 @@ cat > "$LAUNCHER" << 'LAUNCHER_EOF'
 #!/bin/bash
 SIGNAL_FILE="$1"
 LOCK_DIR="$2"
-TERM_PROG="$3"
+TOOL_COUNT_FILE="$3"
+FLAPPY_CLAUDE_DIR="$4"
+TERM_PROG="$5"
 LOG="/tmp/flappy-claude-hook.log"
 
 echo "$(date): Showing dialog (detached)" >> "$LOG"
@@ -105,8 +108,8 @@ fi
 # User said yes - create signal file and launch game
 touch "$SIGNAL_FILE"
 
-# Game command - uses uvx for zero-install execution from PyPI
-GAME_CMD="uvx flappy-claude; rm -f '$SIGNAL_FILE'; rmdir '$LOCK_DIR' 2>/dev/null"
+# Game command
+GAME_CMD="cd '$FLAPPY_CLAUDE_DIR' && uv run python -m flappy_claude; rm -f '$SIGNAL_FILE'; rmdir '$LOCK_DIR' 2>/dev/null"
 
 # Launch in detected terminal
 case "$TERM_PROG" in
@@ -137,7 +140,7 @@ LAUNCHER_EOF
 chmod +x "$LAUNCHER"
 
 # Run launcher completely detached using nohup + disown
-nohup "$LAUNCHER" "$SIGNAL_FILE" "$LOCK_DIR" "$TERM_PROG" > /dev/null 2>&1 &
+nohup "$LAUNCHER" "$SIGNAL_FILE" "$LOCK_DIR" "$TOOL_COUNT_FILE" "$FLAPPY_CLAUDE_DIR" "$TERM_PROG" > /dev/null 2>&1 &
 disown
 
 # Exit immediately - don't block Claude!
