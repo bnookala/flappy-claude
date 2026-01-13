@@ -13,11 +13,20 @@ LOCK_DIR="/tmp/flappy-claude-lock"
 TOOL_COUNT_FILE="/tmp/flappy-claude-tool-count"
 TURN_COUNT_FILE="/tmp/flappy-claude-turns"      # Tracks conversation turns
 LAST_PROMPT_TURN_FILE="/tmp/flappy-claude-last-prompt-turn"  # Turn when last prompted
-FLAPPY_CLAUDE_DIR="${FLAPPY_CLAUDE_DIR:-$HOME/code/flappy-claude}"
 TERM_PROG="$TERM_PROGRAM"  # Capture before backgrounding
 
-# Consume stdin immediately so we don't block
-cat > /dev/null &
+# Read stdin to check tool name
+HOOK_INPUT=$(cat)
+
+# Check if this is AskUserQuestion - pause the game if running
+TOOL_NAME=$(echo "$HOOK_INPUT" | grep -o '"tool_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:.*"\([^"]*\)"/\1/')
+if [ "$TOOL_NAME" = "AskUserQuestion" ]; then
+    # If game is running (lock exists), signal it to pause
+    if [ -d "$LOCK_DIR" ]; then
+        echo "pause" > "$SIGNAL_FILE"
+    fi
+    exit 0
+fi
 
 # Check if game/prompt is already running
 if [ -d "$LOCK_DIR" ]; then
@@ -78,9 +87,7 @@ cat > "$LAUNCHER" << 'LAUNCHER_EOF'
 #!/bin/bash
 SIGNAL_FILE="$1"
 LOCK_DIR="$2"
-TOOL_COUNT_FILE="$3"
-FLAPPY_CLAUDE_DIR="$4"
-TERM_PROG="$5"
+TERM_PROG="$3"
 LOG="/tmp/flappy-claude-hook.log"
 
 echo "$(date): Showing dialog (detached)" >> "$LOG"
@@ -98,8 +105,8 @@ fi
 # User said yes - create signal file and launch game
 touch "$SIGNAL_FILE"
 
-# Game command
-GAME_CMD="cd '$FLAPPY_CLAUDE_DIR' && uv run python -m flappy_claude; rm -f '$SIGNAL_FILE'; rmdir '$LOCK_DIR' 2>/dev/null"
+# Game command - uses uvx for zero-install execution from PyPI
+GAME_CMD="uvx flappy-claude; rm -f '$SIGNAL_FILE'; rmdir '$LOCK_DIR' 2>/dev/null"
 
 # Launch in detected terminal
 case "$TERM_PROG" in
@@ -130,7 +137,7 @@ LAUNCHER_EOF
 chmod +x "$LAUNCHER"
 
 # Run launcher completely detached using nohup + disown
-nohup "$LAUNCHER" "$SIGNAL_FILE" "$LOCK_DIR" "$TOOL_COUNT_FILE" "$FLAPPY_CLAUDE_DIR" "$TERM_PROG" > /dev/null 2>&1 &
+nohup "$LAUNCHER" "$SIGNAL_FILE" "$LOCK_DIR" "$TERM_PROG" > /dev/null 2>&1 &
 disown
 
 # Exit immediately - don't block Claude!
