@@ -9,6 +9,11 @@
   "plugins": [
     {
       "name": "flappy-claude",
+      "source": {
+        "source": "github",
+        "repo": "bnookala/flappy-claude",
+        "path": "plugins/flappy-claude"
+      },
       "description": "Play Flappy Bird while Claude works! Automatically prompts to play during long tasks, pauses when Claude asks questions, and notifies when Claude is ready.",
       "version": "0.2.0",
       "source": ".",
