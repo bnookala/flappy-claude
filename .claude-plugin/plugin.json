@@ -1,0 +1,11 @@
+{
+  "name": "flappy-claude",
+  "version": "0.2.0",
+  "description": "Play Flappy Bird while Claude works! Automatically prompts to play during long tasks, pauses when Claude asks questions, and notifies when Claude is ready.",
+  "author": {
+    "name": "bnookala"
+  },
+  "repository": "https://github.com/bnookala/flappy-claude",
+  "keywords": ["game", "flappy-bird", "entertainment", "hooks"],
+  "category": "entertainment"
+}

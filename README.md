@@ -35,7 +35,7 @@ Install as a Claude Code plugin for automatic hook configuration:
 
 ```bash
 # Add the marketplace (if using a custom marketplace)
-/plugin marketplace add yourusername/flappy-claude
+/plugin marketplace add bnookala/flappy-claude
 
 # Install the plugin
 /plugin install flappy-claude
@@ -44,7 +44,7 @@ Install as a Claude Code plugin for automatic hook configuration:
 Or install directly from GitHub:
 
 ```bash
-/plugin install github:yourusername/flappy-claude
+/plugin install github:bnookala/flappy-claude
 ```
 
 That's it! The hooks are automatically configured.
@@ -57,8 +57,8 @@ If you prefer manual setup:
 
    ```bash
    mkdir -p ~/.claude/hooks
-   curl -o ~/.claude/hooks/pretooluse.sh https://raw.githubusercontent.com/yourusername/flappy-claude/main/hooks/pretooluse.sh
-   curl -o ~/.claude/hooks/stop.sh https://raw.githubusercontent.com/yourusername/flappy-claude/main/hooks/stop.sh
+   curl -o ~/.claude/hooks/pretooluse.sh https://raw.githubusercontent.com/bnookala/flappy-claude/main/hooks/pretooluse.sh
+   curl -o ~/.claude/hooks/stop.sh https://raw.githubusercontent.com/bnookala/flappy-claude/main/hooks/stop.sh
    chmod +x ~/.claude/hooks/*.sh
    ```
 
