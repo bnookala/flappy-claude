@@ -7,9 +7,19 @@ from pathlib import Path
 
 from flappy_claude.config import Config
 from flappy_claude.entities import Bird, GameMode, GameState, GameStatus, Pipe
-from flappy_claude.ipc import check_signal_file, delete_signal_file
+from flappy_claude.ipc import (
+    check_signal_file,
+    create_lock_dir,
+    delete_lock_dir,
+    delete_signal_file,
+    read_signal,
+    SignalType,
+)
 from flappy_claude.physics import apply_gravity, check_collision, check_pipe_passed
 from flappy_claude.scores import save_high_score
+
+# Seconds to ignore input after pause starts (prevents accidental dismiss)
+PAUSE_COOLDOWN = 4.0
 
 
 def render_game(stdscr, state: GameState, config: Config) -> None:
@@ -211,6 +221,34 @@ def render_waiting_screen(stdscr, state: GameState, config: Config) -> None:
     )
 
 
+def render_paused_screen(stdscr, state: GameState, config: Config) -> None:
+    """Render the paused screen when Claude is asking a question."""
+    render_game(stdscr, state, config)
+
+    # Calculate cooldown remaining
+    elapsed = time.time() - state.paused_at
+    cooldown_remaining = max(0, PAUSE_COOLDOWN - elapsed)
+
+    if cooldown_remaining > 0:
+        resume_text = f"Wait {cooldown_remaining:.0f}s..."
+    else:
+        resume_text = "Press SPACE to resume"
+
+    render_overlay(
+        stdscr,
+        " Game Paused ",
+        [
+            "Claude has a question for you!",
+            "",
+            f"Current Score: {state.score}",
+            "",
+            "Answer Claude, then",
+            resume_text,
+        ],
+        config,
+    )
+
+
 def _get_char_at(state: GameState, config: Config, col: int, row: int) -> str:
     """Get the character to display at a specific position."""
     # Check if bird is at this position
@@ -342,6 +380,10 @@ def handle_input(state: GameState, config: Config, key: int) -> None:
         state.status = GameStatus.PLAYING
     elif key == ord(' ') and state.status == GameStatus.PLAYING:
         state.bird.flap(config)
+    elif key == ord(' ') and state.status == GameStatus.PAUSED:
+        # Resume from pause only after cooldown (prevents accidental dismiss)
+        if time.time() - state.paused_at >= PAUSE_COOLDOWN:
+            state.status = GameStatus.PLAYING
     elif key in (ord('y'), ord('Y')) and state.status == GameStatus.PROMPTED:
         state.status = GameStatus.EXITING
     elif key in (ord('n'), ord('N')) and state.status == GameStatus.PROMPTED:
@@ -381,6 +423,9 @@ def game_main(stdscr, state: GameState, config: Config, signal_file: Path | None
     stdscr.timeout(1000 // config.fps)  # Input timeout for frame rate
     init_colors()
 
+    # Create lock directory to indicate game is running (for hook detection)
+    create_lock_dir()
+
     frame_time = 1.0 / config.fps
 
     try:
@@ -389,11 +434,22 @@ def game_main(stdscr, state: GameState, config: Config, signal_file: Path | None
 
             # Handle input
             key = stdscr.getch()
+            was_paused = state.status == GameStatus.PAUSED
             handle_input(state, config, key)
 
-            # Check signal file for Claude ready (when waiting or playing)
+            # Clear signal file when resuming from pause
+            if was_paused and state.status == GameStatus.PLAYING and signal_file:
+                delete_signal_file(signal_file)
+
+            # Check signal file for Claude signals (when waiting or playing)
             if signal_file and state.status in (GameStatus.WAITING, GameStatus.PLAYING):
-                if not state.claude_ready and check_signal_file(signal_file):
+                signal = read_signal(signal_file)
+                if signal == SignalType.PAUSE:
+                    # Claude is asking a question - pause the game
+                    state.status = GameStatus.PAUSED
+                    state.paused_at = time.time()
+                elif signal == SignalType.READY and not state.claude_ready:
+                    # Claude is done
                     state.claude_ready = True
                     state.was_playing = (state.status == GameStatus.PLAYING)
                     state.prompted_at = time.time()
@@ -405,6 +461,8 @@ def game_main(stdscr, state: GameState, config: Config, signal_file: Path | None
             # Render based on state
             if state.status == GameStatus.WAITING:
                 render_waiting_screen(stdscr, state, config)
+            elif state.status == GameStatus.PAUSED:
+                render_paused_screen(stdscr, state, config)
             elif state.status == GameStatus.PROMPTED:
                 # Calculate countdown (10 seconds)
                 elapsed = time.time() - state.prompted_at
@@ -433,9 +491,10 @@ def game_main(stdscr, state: GameState, config: Config, signal_file: Path | None
                 time.sleep(frame_time - elapsed)
 
     finally:
-        # Clean up signal file
+        # Clean up signal file and lock directory
         if signal_file:
             delete_signal_file(signal_file)
+        delete_lock_dir()
 
 
 def run_game_loop(

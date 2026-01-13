@@ -11,6 +11,7 @@ class GameStatus(Enum):
 
     WAITING = auto()
     PLAYING = auto()
+    PAUSED = auto()  # Paused while Claude asks a question
     DEAD = auto()
     PROMPTED = auto()
     EXITING = auto()
@@ -73,6 +74,7 @@ class GameState:
     claude_ready: bool = False
     was_playing: bool = False  # Track if user was actively playing when Claude finished
     prompted_at: float = 0.0  # Timestamp when Claude Ready prompt appeared
+    paused_at: float = 0.0  # Timestamp when game was paused (for input cooldown)
 
     @classmethod
     def new_game(

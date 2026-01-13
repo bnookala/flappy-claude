@@ -16,8 +16,18 @@ LAST_PROMPT_TURN_FILE="/tmp/flappy-claude-last-prompt-turn"  # Turn when last pr
 FLAPPY_CLAUDE_DIR="${FLAPPY_CLAUDE_DIR:-$HOME/code/flappy-claude}"
 TERM_PROG="$TERM_PROGRAM"  # Capture before backgrounding
 
-# Consume stdin immediately so we don't block
-cat > /dev/null &
+# Read stdin to check tool name
+HOOK_INPUT=$(cat)
+
+# Check if this is AskUserQuestion - pause the game if running
+TOOL_NAME=$(echo "$HOOK_INPUT" | grep -o '"tool_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:.*"\([^"]*\)"/\1/')
+if [ "$TOOL_NAME" = "AskUserQuestion" ]; then
+    # If game is running (lock exists), signal it to pause
+    if [ -d "$LOCK_DIR" ]; then
+        echo "pause" > "$SIGNAL_FILE"
+    fi
+    exit 0
+fi
 
 # Check if game/prompt is already running
 if [ -d "$LOCK_DIR" ]; then
